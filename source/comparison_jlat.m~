@@ -1,0 +1,423 @@
+%% Number of nodes in the network
+% A full connected mesh is generated.
+% n-1 link quality for each of the nodes. 
+N=4;
+%number of nodes in topology
+beta=0.8;
+% for the first simulations only the effect of burst is observed. thus it
+% is assumed that each link has the same burst.
+trainingsize=1000;
+realsize=10^6;
+%training data set size
+%trainingdata=zeros(N,N-1,trainingsize);
+realdata=zeros(N,N-1,realsize);
+for i=1:N
+    for j=1:N-1
+            if (i==1 && j==1) || (i==2 && j==3) %  || (i==2 && j==3)
+                beta=0.01;
+                betagood=beta;
+            else
+                beta=0.9;
+                betabad=beta;
+            end
+            [Xp,Xn]=transitionprob(beta,realsize);
+            %trainingdata(i,j,:)=squeeze(bursty_traffic_sim(Xp,Xn,trainingsize));
+            realdata(i,j,:)=squeeze(bursty_traffic_sim(Xp,Xn,realsize));
+    end
+end
+%Written with two for loops for varying beta between links.for each node.
+trainingdata=realdata(:,:,1:1000);
+%%
+% The problem is to route packets from 1 to 4. The decision is arbitrary
+% but since the network is fully symmetric it shouldnt affect anything.
+%Possible routes
+% 1-4 (1)/ 1-2-4 (2)/ 1-3-4 (3)/ 1-2-3-4 (4)/ 1-3-2-4 (5)
+%automate this later on
+paths=zeros(5,1);
+%calculate metrics for routing decision.
+% ETX
+cutoff=20;
+%limitofpmf for JLAT
+etx=zeros(N,N-1);
+burstmax=zeros(N,N-1);
+jlat=zeros(N,N-1,cutoff);
+%training data for routing decisions
+for i=1:N
+    for j=1:N-1
+        etx(i,j)= trainingsize/sum(trainingdata(i,j,:)>0);
+        burstmax(i,j)=computeBmax(squeeze((trainingdata(i,j,:))),1);
+        jlat(i,j,:)=squeeze(computeJLAT(squeeze(trainingdata(i,j,:))));
+        %assume one way transmissions
+    end
+end
+
+%%following example was for generalizing the routing,
+%will extend in future
+%calculate etx for each path
+% %each topology is limited with maximum of N-1 hops due to full connectivity
+% for i=1:N-1
+%     dum=0;
+%     %extrahops
+%     interhop=i-1;
+%     currenthop=1;
+%     for j=1:i
+%         if interhops==0;
+%             dum=dum+etx(currenthop,N-1);
+%         end
+%     
+%     end
+%     paths(i)=
+% end
+selections=zeros(6,1);
+order=1:5;
+selectedroute_minhop=1;
+selections(1)=1;
+
+paths(1)=squeeze(etx(1,3));
+paths(2)=squeeze(etx(1,1)+etx(2,3));
+paths(3)=squeeze(etx(1,2)+etx(3,3));
+paths(4)=squeeze(etx(1,1)+etx(2,2)+etx(3,3));
+paths(5)=squeeze(etx(1,2)+etx(3,2)+etx(2,3));
+
+Selectedroute_etx=order(paths(:)==min(paths));
+selections(2)=Selectedroute_etx;
+paths(1)=burstmax(1,3)+1;
+paths(2)=burstmax(1,1)+burstmax(2,3)+2;
+paths(3)=burstmax(1,2)+burstmax(3,3)+2;
+paths(4)=burstmax(1,1)+burstmax(2,2)+burstmax(3,3)+3;
+paths(5)=burstmax(1,2)+burstmax(3,2)+burstmax(2,3)+3;
+
+Selectedroute_burstmax=order(paths==min(paths));
+selections(3)=Selectedroute_burstmax;
+%jlat=zeros(N,N-1,cutoff);
+
+path=zeros(5,cutoff);
+
+path(1,:)=squeeze(jlat(1,3,:));
+path(2,:)=combinejlats(squeeze(jlat(1,1,:)),squeeze(jlat(2,3,:)));
+path(3,:)=combinejlats(squeeze(jlat(1,2,:)),squeeze(jlat(3,3,:)));
+path(4,:)=combinejlats(combinejlats(squeeze(jlat(1,1,:)),squeeze(jlat(2,2,:))),squeeze(jlat(3,3,:)));
+path(5,:)=combinejlats(combinejlats(squeeze(jlat(1,2,:)),squeeze(jlat(3,2,:))),squeeze(jlat(2,3,:)));
+
+
+selectdeadline=2;
+sumpath=zeros(5,1);
+for i=1:5
+    sumpath(i)=sum(path(i,1:selectdeadline));
+end
+Selectedroute_jlat=order(sumpath==max(sumpath));
+selections(4)=Selectedroute_jlat;
+
+
+selectdeadline=5;
+sumpath=zeros(5,1);
+for i=1:5
+    sumpath(i)=sum(path(i,1:selectdeadline));
+end
+Selectedroute_jlat=order(sumpath==max(sumpath));
+selections(5)=Selectedroute_jlat;
+
+selectdeadline=8;
+sumpath=zeros(5,1);
+for i=1:5
+    sumpath(i)=sum(path(i,1:selectdeadline));
+end
+Selectedroute_jlat=order(sumpath==max(sumpath));
+selections(6)=Selectedroute_jlat;
+
+% 
+% selectdeadline=15;
+% sumpath=zeros(5,1);
+% for i=1:5
+%     sumpath(i)=sum(path(i,1:selectdeadline));
+% end
+% Selectedroute_jlat=order(sumpath==max(sumpath));
+% selections(7)=Selectedroute_jlat;
+
+
+
+path_route(1,:) = [0 ; 0];
+path_route(2,:) = [2 ; 0 ];
+path_route(3,:) = [3 ; 0];
+path_route(4,:) = [2; 3 ];
+path_route(5,:) = [3; 2 ];
+%packetgeneration
+freq_pack=30;
+
+paths=1:5;
+delay=zeros(ceil(realsize/freq_pack +1),5);
+for i=1:5
+
+%hops=sum(path_route(i,:) ==0)-(N-2)+1;
+%if single hop select one-four link
+    if paths(i)==1
+        datah1 = squeeze(realdata(1,3,:));
+    elseif paths(i)==2
+        datah1 = squeeze(realdata(1,1,:));%1-2
+        datah2 = squeeze(realdata(2,3,:));%2-4
+    elseif paths(i)==3
+        datah1 = squeeze(realdata(1,2,:));%1-3
+        datah2 = squeeze(realdata(3,3,:));%3-4
+    elseif paths(i)==5
+        datah1 = squeeze(realdata(1,2,:));%1-3
+        datah2 = squeeze(realdata(3,2,:));%3-2
+        datah3 = squeeze(realdata(2,3,:));%2-4
+    elseif paths(i)==4
+        datah1 = squeeze(realdata(1,1,:));%1-2
+        datah2 = squeeze(realdata(2,2,:));%2-3
+        datah3 = squeeze(realdata(3,3,:));%3-4
+    end
+packcount=0;
+
+    for j=1:realsize
+        if mod(j,freq_pack)==0
+            packcount=packcount+1;
+           if paths(i)==1
+               count=1;
+               while datah1(j)~=1 && j~=realsize
+                    j=j+1;
+                    count=count+1;
+               end
+               delay(packcount,i)=count;
+           elseif paths(i)==2 || paths(i)==3
+               count=1;
+               while datah1(j)~=1 && j~=realsize
+                    j=j+1;
+                    count=count+1;
+               end 
+               if j==realsize
+                   break;
+               end
+               j=j+1;
+               count=count+1;
+               while datah2(j)~=1 && j~=realsize
+                    j=j+1;
+                    count=count+1;
+               end
+               delay(packcount,i)=count;
+           elseif paths(i)==4 || paths(i)==5
+                count=1;
+               while datah1(j)~=1 && j~=realsize
+                    j=j+1;
+                    count=count+1;
+               end 
+               if j==realsize
+                   break;
+               end
+               j=j+1;
+               count=count+1;
+               while datah2(j)~=1 && j~=realsize
+                    j=j+1;
+                    count=count+1;
+               end 
+               if j==realsize
+                   break;
+               end
+                j=j+1;
+                count=count+1;
+               while datah3(j)~=1 && j~=realsize
+                    j=j+1;
+                    count=count+1;
+               end 
+               delay(packcount,i)=count;
+           end
+        end
+    end
+end
+
+[f1,x1] = ecdf(delay(:,1));
+[f2,x2] = ecdf(delay(:,2));
+[f3,x3] = ecdf(delay(:,3));
+[f4,x4] = ecdf(delay(:,4));
+[f5,x5] = ecdf(delay(:,5));
+
+
+%%
+%%make up
+
+
+
+width = 3.487*3;
+height = width / 1.618;
+
+%[fig, ax] = plt.subplots();
+%fig.subplots_adjust(left=.15, bottom=.16, right=.99, top=.97);
+
+
+
+
+ fig=figure('Units','inches',...
+ 'Position',[2 2 width height],...
+ 'PaperPositionMode','auto');
+
+%  ax = axes('parent',fig);
+% x=(5:0.5:30)*10^3;
+% semilogy(...
+%     x,mean_droptr_4m(5,:),'k>',...
+%     x,mean_droptr_4m(1,:),'ks',... 
+%     x,mean_droptr_4m(2,:),'kv',... 
+%     x,mean_drop_4m(5,:),'kd',...
+%     x,mean_drop_5m(3,:),'k*',...  
+%     x,mean_drop_5m(4,:),'ko',...  
+%     x,mean_drop_4m(6,:),'k+',... 
+%     x,mean_droptr_4m(4,:),'kx',...
+%     x,mean_droptr_4m(6,:),'k^',...
+%     x,mean_droptr_6m(5,:),'kp',...
+%     x,mean_droptr_4m(3,:),'k<',...
+%     'MarkerSize',6)
+
+% LOC=[0.4 0.62 0 0];
+% legend(...
+%     'DABTRA, Delta',...
+%     'Tree, Beta',...
+%     'Tree, Delta',...
+%     'DAB, Delta',...
+%     'PreBO, Delta',...
+%     'PreBO, Beta',...
+%     'DAB, Beta',...
+%     'PreBOTRA, Beta',...
+%     'DABTRA, Beta',...
+%     'DABTRA N, Delta',...
+%     'PreBOTRA, Delta',...
+%     'Location',LOC)
+stairs(x1,f1,'r--','LineWidth',2)
+hold on
+stairs(x2,f2,'b-s','LineWidth',2)
+stairs(x3,f3,'p-.','LineWidth',2)
+stairs(x4,f4,'m-<','LineWidth',2)
+stairs(x5,f5,'k:','LineWidth',3)
+hold off
+ %(x1,f1,'r--',x2,f2,'b-s',x3,f3,'p-.',x4,f4,'m-',x5,f5,'k-o')
+%bar(f,'grouped')
+AX=legend('Path 1','\textbf{Path 2}','Path 3','Path 4','Path 5','Location','southwest');
+ 
+set(AX,...
+...'XTick',5:8, 'XTickLabel',{'I' 'II' 'III' 'IV' },...
+...'XTick',1:6, 'XTickLabel',{'NINH' 'WINH' 'NIWH' 'WIWH' 'NIFH' 'WIFH'},...
+...%'YTick',0:0.01:0.05, 'YTickLabel',0:0.01:0.05,...
+'FontSize',18,...
+'FontName','Helvetica',...
+'LineWidth',1,...
+ 'Interpreter', 'latex')
+ 
+set(gca,...
+...'XTick',5:8, 'XTickLabel',{'I' 'II' 'III' 'IV' },...
+...'XTick',1:6, 'XTickLabel',{'NINH' 'WINH' 'NIWH' 'WIWH' 'NIFH' 'WIFH'},...
+...%'YTick',0:0.01:0.05, 'YTickLabel',0:0.01:0.05,...
+'Units','normalized',...
+'FontUnits','points',...
+'FontWeight','normal',...
+'GridLineStyle',':',...
+'FontSize',14,...
+'LineWidth',2,...
+'FontName','Helvetica')
+
+ylabel({'Cumulative mass'},...
+'FontUnits','points',...
+'interpreter','latex',...
+'FontSize',20,...
+'FontName','Helvetica')
+
+xlabel('Latency in slots',...
+'FontUnits','points',...
+'interpreter','latex',...
+'FontSize',20,...
+'FontName','Helvetica')
+
+%grid minor
+% dummyax = axes('parent',gcf,'position',get(ax,'position'));
+% hold(dummyax, 'on');
+% set(dummyax,'visible','off')
+% h0 = plot(dummyax, nan(1,2), 'g-');
+% h1 = plot(dummyax, nan(1,2), 'ko');
+% h2 = plot(dummyax, nan(1,2), 'k*');
+% h3 = plot(dummyax, nan(1,2), 'kd');
+% h4 = plot(dummyax, nan(1,2), 'ks');
+% h5 = plot(dummyax, nan(1,2), 'k<');
+% h6 = plot(dummyax, nan(1,2), 'k>');
+% h7 = plot(dummyax, nan(1,2), 'b');
+% h8 = plot(dummyax, nan(1,2), 'r');
+% h9 = plot(dummyax, nan(1,2), 'm');
+% legend([h0 h1 h2 h3 h4 h5 h6 h7 h8 h9],'PreBOTRA Analysis','LTE','LTE + PreBO','LTE + DAB','LTE + Tree','PreBOTRA','DABTRA','Delta','Beta(50)','Beta(500)','Location','southeast')
+
+%set(gca,'yscale','log')
+
+% legend('PreBOTRA Analysis','Delta- LTE','Delta- LTE + PreBO','Delta- LTE + DAB','Delta- LTE + Tree'...
+%     ,'Delta- PreBOTRA','Delta- DABTRA',...
+%     'Beta(50)- LTE (Base)','Beta(50)- LP (Harwahyu et. al.)','Beta(50)- LDAB (Tavana et. al.)','Beta(50)- LT (Madueno et. al.)'...
+%     ,'Beta(50)- PreBOTRA (Our 1)','Beta(50)- LT-DAB (Our 2)',...
+%     'Beta(500)- LTE (Base)','Beta(500)- LP (Harwahyu et. al.)','Beta(500)- LDAB (Tavana et. al.)','Beta(500)- LT (Madueno et. al.)'...
+%     ,'Beta(500)- PreBOTRA (Our 1)','Beta(500)- LT-DAB (Our 2)'...
+%     ,'Location','northwest')
+axis([0 8 0 1])
+
+% create a new pair of axes inside current figure
+% axes('position',[.6 .54 .25 .25])
+% box on % put box around new pair of axes
+% 
+% indexOfInterest = (x < 12000) & (x > 10000); % range of t near perturbation
+% x=x(indexOfInterest);
+% %plot(x(indexOfInterest),signal(indexOfInterest)) % plot on new axes
+% plot(...
+%     x,mean_droptr_4m(4,indexOfInterest),'kx',...
+%     x,mean_droptr_4m(6,indexOfInterest),'k^',...
+%     x,mean_droptr_6m(5,indexOfInterest),'kp',...
+%     x,mean_droptr_4m(3,indexOfInterest),'k<',...
+%     'MarkerSize',4)
+% 
+% axis tight
+%
+%grid on
+%set(gca,'yscale','log')
+
+%view([270 90])
+%c=colorbar('east');
+%ax = gca;
+%axpos = ax.Position;
+%cpos = c.Position;
+%set(c,'YTick',[1,2],'YTickLabel',['Periodic','Bursty'])
+%cpos(3) = 0.5*cpos(3);
+%c.Position = cpos;
+%ax.Position = axpos;
+%strmin = ['Minimum = ',num2str(ymin)];
+Decisions= ['Minhop = Path ' ,num2str(selections(1)),char(10),  'ETX = Path ',num2str(selections(2)),char(10),'BMAX = Path ' ,...
+    num2str(selections(3)),char(10),'JLAT DL=2 = Path ' ,num2str(selections(4)),char(10),'JLAT DL=5 = Path ' ,num2str(selections(5)),char(10),'JLAT DL=8 = Path ' ,num2str(selections(6))];
+%txt1 = '\leftarrow sin(\pi) = 0';
+text1=text(0.2,0.75,Decisions);
+set(text1,...
+...'XTick',5:8, 'XTickLabel',{'I' 'II' 'III' 'IV' },...
+...'XTick',1:6, 'XTickLabel',{'NINH' 'WINH' 'NIWH' 'WIWH' 'NIFH' 'WIFH'},...
+...%'YTick',0:0.01:0.05, 'YTickLabel',0:0.01:0.05,...
+'FontSize',18,...
+'FontName','Helvetica',...
+ 'Interpreter', 'latex')
+
+
+Beta = ['Beta = ' ,num2str(betabad),char(10),'Beta_p= ' ,num2str(betagood)];
+%Beta = ['Beta = ' ,num2str(betabad)];
+text2=text(2.6,0.87,Beta);
+set(text2,...
+...'XTick',5:8, 'XTickLabel',{'I' 'II' 'III' 'IV' },...
+...'XTick',1:6, 'XTickLabel',{'NINH' 'WINH' 'NIWH' 'WIWH' 'NIFH' 'WIFH'},...
+...%'YTick',0:0.01:0.05, 'YTickLabel',0:0.01:0.05,...
+'FontSize',18,...
+'FontName','Helvetica',...
+ 'Interpreter', 'latex')
+
+%print(fig,'scatteroodpart1','-dpdf','-r0')
+print(fig,'delay_routing_mixed_path3','-depsc','-r0')
+
+%print - epsFig
+
+% x = np.arange(0.0, 3*np.pi , 0.1)
+% plt.plot(x, np.sin(x))
+
+% ax.set_ylabel('Some Metric (in unit)')
+% ax.set_xlabel('Something (in unit)')
+% ax.set_xlim(0, 3*np.pi)
+
+%fig.set_size_inches(width, height)
+%fig.savefig('plot.pdf')
+
+
+
